@@ -30,6 +30,7 @@ shopt -s extglob
 myprog="kmodtool-${repo}"
 myver="0.12.1"
 
+kmodgroups=
 kmodname=
 build_kernels="current"
 kernels_known_variants=
@@ -52,31 +53,86 @@ error_out()
 print_rpmtemplate_header()
 {
 	echo
-	echo '%global kmodinstdir_prefix  '/usr/lib/modules/
-	echo '%global kmodinstdir_postfix '/extra/${kmodname}/
+	echo '%global kmodinstdir_prefix  '/usr/lib/modules
+	echo '%global kmodinstdir_postfix '/extra/${kmodname}
 	echo '%global kernel_versions     '${kernel_versions}
+
+	if [[ "${kmodgroups}" ]]; then
+		echo '%global kmodgroups_list     '%{?akmodgroup}%{!?akmodgroup:${kmodgroups}}
+	fi
+
 	echo
 }
 
 print_akmodtemplate ()
 {
+	local group
+
 	echo
+	echo -n '%global akmod_install mkdir -p $RPM_BUILD_ROOT/%{_usrsrc}/akmods/; '
+
+	if [[ ! "${kmodgroups}" ]]; then
+		echo -n 'rpmbuild --define "_sourcedir %{_sourcedir}" '
+		echo -n '--define "_srcrpmdir $RPM_BUILD_ROOT/%{_usrsrc}/akmods/" '
+		echo -n '-bs --nodeps %{_specdir}/%{name}.spec ; '
+		echo -n "ln -s \$(ls \$RPM_BUILD_ROOT/%{_usrsrc}/akmods/) \$RPM_BUILD_ROOT/%{_usrsrc}/akmods/${kmodname}-kmod.latest"
+		echo
+	else
+		for group in ${kmodgroups}
+		do
+			echo -n "echo %%%%global akmodgroup ${group} > %{name}-${group}.spec; "
+			echo -n "cat %{_specdir}/%{name}.spec >> %{name}-${group}.spec ; "
+			echo -n 'rpmbuild --define "_sourcedir %{_sourcedir}" '
+			echo -n '--define "_srcrpmdir $RPM_BUILD_ROOT/%{_usrsrc}/akmods/" '
+			echo -n "-bs --nodeps %{name}-${group}.spec ; "
+			echo -n "mv \$RPM_BUILD_ROOT/%{_usrsrc}/akmods/%{name}-%{version}-%{release}.src.rpm \$RPM_BUILD_ROOT/%{_usrsrc}/akmods/%{name}-${group}-%{version}-%{release}.src.rpm ; "
+			echo -n "ln -s %{name}-${group}-%{version}-%{release}.src.rpm \$RPM_BUILD_ROOT/%{_usrsrc}/akmods/${kmodname}-${group}-kmod.latest; "
+		done
+
+		echo
+	fi
+
 	cat <<EOF
 
-%global akmod_install mkdir -p \$RPM_BUILD_ROOT/%{_usrsrc}/akmods/; \\\
-rpmbuild --define "_sourcedir %{_sourcedir}" \\\
---define "_srcrpmdir \$RPM_BUILD_ROOT/%{_usrsrc}/akmods/" \\\
--bs --nodeps %{_specdir}/%{name}.spec ; \\\
-ln -s \$(ls \$RPM_BUILD_ROOT/%{_usrsrc}/akmods/) \$RPM_BUILD_ROOT/%{_usrsrc}/akmods/${kmodname}-kmod.latest
-
 %package -n akmod-${kmodname}
+EOF
+
+	if [[ ! "${kmodgroups}" ]]; then
+		cat <<EOF
 Summary:	Akmod package for ${kmodname} kernel module(s) 
+EOF
+
+	else
+		cat <<EOF
+Summary:	Metapackage which tracks akmod packages for ${kmodname} kernel module(s) 
+EOF
+
+	fi
+
+	cat <<EOF
 Group: 		System Environment/Kernel
+EOF
+
+	if [[ ! "${kmodgroups}" ]]; then
+		cat <<EOF
 Requires:   kmodtool
 Requires: 	akmods
 %{?AkmodsBuildRequires:Requires: %{AkmodsBuildRequires}}
 # same requires and provides as a kmods package would have
 Requires: 	${kmodname}-kmod-common >= %{?epoch:%{epoch}:}%{version}
+EOF
+
+	else
+		for group in ${kmodgroups}
+		do
+			cat <<EOF
+Requires: 	akmod-${kmodname}-${group} = %{?epoch:%{epoch}:}%{version}-%{release}
+EOF
+
+		done
+	fi
+
+	cat <<EOF
 Provides: 	${kmodname}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
 EOF
 
@@ -88,20 +144,87 @@ EOF
 	cat <<EOF
 
 %description -n akmod-${kmodname}
+EOF
+
+	if [[ ! "${kmodgroups}" ]]; then
+		cat <<EOF
 This package provides the akmod package for the ${kmodname} kernel modules.
 
 %posttrans -n akmod-${kmodname}
 nohup /usr/sbin/akmods --from-akmod-posttrans --akmod ${kmodname} &> /dev/null &
 
+EOF
+
+	else
+		cat <<EOF
+This is a meta-package without payload which sole purpose is to require the
+akmod packages for the ${kmodname} kernel modules.
+
+EOF
+
+	fi
+
+	cat <<EOF
+
 %files -n akmod-${kmodname}
+EOF
+
+	if [[ ! "${kmodgroups}" ]]; then
+		cat <<EOF
 %defattr(-,root,root,-)
 %{_usrsrc}/akmods/*
 
 EOF
+
+	else
+		echo
+
+		for group in ${kmodgroups}
+		do
+			cat <<EOF
+%package -n akmod-${kmodname}-${group}
+Summary:	Akmod package for ${kmodname}-${group} kernel module(s) 
+Group: 		System Environment/Kernel
+Requires:   kmodtool
+Requires: 	akmods
+%{?AkmodsBuildRequires:Requires: %{AkmodsBuildRequires}}
+# same requires and provides as a kmods package would have
+Requires: 	${kmodname}-kmod-common >= %{?epoch:%{epoch}:}%{version}
+Provides: 	${kmodname}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
+Provides: 	${kmodname}-${group}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
+EOF
+
+		if [[ ${obsolete_name} ]]; then
+			echo "Provides:   akmod-${obsolete_name}-${group} = ${obsolete_version}"
+			echo "Obsoletes:  akmod-${obsolete_name}-${group} < ${obsolete_version}"
+		fi
+
+			cat <<EOF
+Conflicts: 	akmod-${kmodname} < %{?epoch:%{epoch}:}%{version}-%{release}
+
+%description -n akmod-${kmodname}-${group}
+This package provides the akmod package for the ${kmodname}-${group} kernel modules.
+
+%posttrans -n akmod-${kmodname}-${group}
+nohup /usr/sbin/akmods --from-akmod-posttrans --akmod ${kmodname}-${group} &> /dev/null &
+
+
+%files -n akmod-${kmodname}-${group}
+
+%defattr(-,root,root,-)
+%{_usrsrc}/akmods/%{name}-${group}-%{version}-%{release}.src.rpm
+%{_usrsrc}/akmods/${kmodname}-${group}-kmod.latest
+
+EOF
+
+		done
+	fi
 }
 
 print_akmodmeta ()
 {
+	local group
+
 		cat <<EOF
 %package      -n kmod-${kmodname}
 Summary:         Metapackage which tracks in ${kmodname} kernel module for newest kernel${dashvariant}
@@ -114,10 +237,21 @@ Provides:        kmod-${kmodname}-PAE = %{?epoch:%{epoch}:}%{version}-%{release}
 Requires:        akmod-${kmodname} = %{?epoch:%{epoch}:}%{version}-%{release}
 EOF
 
+	if [[ "${kmodgroups}" ]]; then
+		for group in ${kmodgroups}
+		do
+			cat <<EOF
+Requires:        kmod-${kmodname}-${group} = %{?epoch:%{epoch}:}%{version}-%{release}
+EOF
+
+		done
+	fi
+
 	if [[ ${obsolete_name} ]]; then
 		echo "Provides:        kmod-${obsolete_name} = ${obsolete_version}"
 		echo "Obsoletes:       kmod-${obsolete_name} < ${obsolete_version}"
 	fi
+
 cat <<EOF
 
 %description  -n kmod-${kmodname}${dashvariant}
@@ -128,10 +262,52 @@ to make sure you get it together with a new kernel.
 %files        -n kmod-${kmodname}${dashvariant}
 %defattr(644,root,root,755)
 EOF
+
+	if [[ "${kmodgroups}" ]]; then
+		echo
+
+		for group in ${kmodgroups}
+		do
+			cat <<EOF
+%package      -n kmod-${kmodname}-${group}
+Summary:         Metapackage which tracks in ${kmodname}-${group} kernel module for newest kernel${dashvariant}
+Group:           System Environment/Kernel
+
+Provides:        ${kmodname}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
+Provides:        ${kmodname}-${group}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
+Provides:        kmod-${kmodname}-xen = %{?epoch:%{epoch}:}%{version}-%{release}
+Provides:        kmod-${kmodname}-${group}-xen = %{?epoch:%{epoch}:}%{version}-%{release}
+Provides:        kmod-${kmodname}-smp = %{?epoch:%{epoch}:}%{version}-%{release}
+Provides:        kmod-${kmodname}-${group}-smp = %{?epoch:%{epoch}:}%{version}-%{release}
+Provides:        kmod-${kmodname}-PAE = %{?epoch:%{epoch}:}%{version}-%{release}
+Provides:        kmod-${kmodname}-${group}-PAE = %{?epoch:%{epoch}:}%{version}-%{release}
+Requires:        akmod-${kmodname}-${group} = %{?epoch:%{epoch}:}%{version}-%{release}
+EOF
+
+			if [[ ${obsolete_name} ]]; then
+				echo "Provides:        kmod-${obsolete_name}-${group} = ${obsolete_version}"
+				echo "Obsoletes:       kmod-${obsolete_name}-${group} < ${obsolete_version}"
+			fi
+
+			cat <<EOF
+Conflicts: 	kmod-${kmodname} < %{?epoch:%{epoch}:}%{version}-%{release}
+
+%description  -n kmod-${kmodname}-${group}
+This is a meta-package without payload which sole purpose is to require the
+${kmodname}-${group} kernel module(s) for the newest kernel,
+to make sure you get it together with a new kernel.
+
+%files        -n kmod-${kmodname}-${group}
+%defattr(644,root,root,755)
+EOF
+		done
+	fi
 }
 
 print_rpmtemplate_per_kmodpkg ()
 {
+	local group
+
 	if [[ "${1}" == "--custom" ]]; then
 		shift
 		local customkernel=true
@@ -145,16 +321,51 @@ print_rpmtemplate_per_kmodpkg ()
 	local kernel_variant="${2:+-${2}}"
 
     # first part
+	if [[ "${kmodgroups}" ]]; then
+		cat <<EOF
+%if "%{?akmodgroup}" == ""
+EOF
+
+	fi
+
 	cat <<EOF
 %package       -n kmod-${kmodname}-${kernel_uname_r}
+EOF
+
+	if [[ ! "${kmodgroups}" ]]; then
+		cat <<EOF
 Summary:          ${kmodname} kernel module(s) for ${kernel_uname_r}
+EOF
+
+	else
+		cat <<EOF
+Summary:          Metapackage which tracks in ${kmodname} kernel module(s) for ${kernel_uname_r}
+EOF
+
+	fi
+
+	cat <<EOF
 Group:            System Environment/Kernel
 Provides:         kernel-modules-for-kernel = ${kernel_uname_r}
 Provides:         ${kmodname}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
+EOF
+
+	if [[ ! "${kmodgroups}" ]]; then
+		cat <<EOF
 Requires:         ${kmodname}-kmod-common >= %{?epoch:%{epoch}:}%{version}
 Requires(post):   /usr/sbin/depmod
 Requires(postun): /usr/sbin/depmod
 EOF
+
+	else
+		for group in ${kmodgroups}
+		do
+			cat <<EOF
+Requires: 	kmod-${kmodname}-${group}-${kernel_uname_r} = %{?epoch:%{epoch}:}%{version}
+EOF
+
+		done
+	fi
 
 	if [[ ${obsolete_name} ]]; then
 		echo "Provides:        kmod-${obsolete_name}-${kernel_uname_r} = ${obsolete_version}"
@@ -162,8 +373,9 @@ EOF
 	fi
 
 	# second part
-	if [[ ! "${customkernel}" ]]; then
-	     cat <<EOF
+	if [[ ! "${kmodgroups}" ]]; then
+		if [[ ! "${customkernel}" ]]; then
+		     cat <<EOF
 Requires:         kernel-uname-r = ${kernel_uname_r}
 BuildRequires:	  kernel-devel-uname-r = ${kernel_uname_r}
 %post          -n kmod-${kmodname}-${kernel_uname_r}
@@ -172,32 +384,127 @@ BuildRequires:	  kernel-devel-uname-r = ${kernel_uname_r}
 /usr/sbin/depmod  -aF /boot/System.map-${kernel_uname_r} ${kernel_uname_r} &> /dev/null || :
 
 EOF
-	else
-	  cat <<EOF
+		else
+		  cat <<EOF
 %post          -n kmod-${kmodname}-${kernel_uname_r}
 [[ "$(uname -r)" == "${kernel_uname_r}"  ]] && /usr/sbin/depmod -a > /dev/null || :
 %postun        -n kmod-${kmodname}-${kernel_uname_r}
 [[ "$(uname -r)" == "${kernel_uname_r}"  ]] && /usr/sbin/depmod -a > /dev/null || :
 
 EOF
+		fi
 	fi
 
   # third part
 	cat <<EOF
 %description  -n kmod-${kmodname}-${kernel_uname_r}
+EOF
+
+	if [[ ! "${kmodgroups}" ]]; then
+		cat <<EOF
 This package provides the ${kmodname} kernel modules built for the Linux
 kernel ${kernel_uname_r} for the %{_target_cpu} family of processors.
+EOF
+
+	else
+		for group in ${kmodgroups}
+		do
+			cat <<EOF
+This is a meta-package without payload which sole purpose is to require the
+kmod packages for the ${kmodname} kernel ${kernel_uname_r} modules.
+EOF
+
+		done
+	fi
+
+	cat <<EOF
+
 %files        -n kmod-${kmodname}-${kernel_uname_r}
 %defattr(644,root,root,755)
+EOF
+
+	if [[ ! "${kmodgroups}" ]]; then
+		cat <<EOF
 %dir /usr/lib/modules/${kernel_uname_r}/extra
 /usr/lib/modules/${kernel_uname_r}/extra/${kmodname}/
 
 
 EOF
+
+	else
+		cat <<EOF
+%endif
+
+
+EOF
+
+		for group in ${kmodgroups}
+		do
+			cat <<EOF
+%package       -n kmod-${kmodname}-${group}-${kernel_uname_r}
+Summary:          ${kmodname}-${group} kernel module(s) for ${kernel_uname_r}
+Group:            System Environment/Kernel
+Provides:         kernel-modules-for-kernel = ${kernel_uname_r}
+Provides:         ${kmodname}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
+Provides:         ${kmodname}-${group}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
+Requires:         ${kmodname}-kmod-common >= %{?epoch:%{epoch}:}%{version}
+Requires(post):   /usr/sbin/depmod
+Requires(postun): /usr/sbin/depmod
+Provides:        kmod-${kmodname}-${kernel_uname_r} = %{?epoch:%{epoch}:}%{version}-%{release}
+Obsoletes:       kmod-${kmodname}-${kernel_uname_r} < %{?epoch:%{epoch}:}%{version}-%{release}
+EOF
+
+			if [[ ${obsolete_name} ]]; then
+				echo "Provides:        kmod-${obsolete_name}-${kernel_uname_r} = ${obsolete_version}"
+				echo "Obsoletes:       kmod-${obsolete_name}-${kernel_uname_r} < ${obsolete_version}"
+				echo "Provides:        kmod-${obsolete_name}-${group}-${kernel_uname_r} = ${obsolete_version}"
+				echo "Obsoletes:       kmod-${obsolete_name}-${group}-${kernel_uname_r} < ${obsolete_version}"
+			fi
+
+			# second part
+			if [[ ! "${customkernel}" ]]; then
+				cat <<EOF
+Requires:         kernel-uname-r = ${kernel_uname_r}
+BuildRequires:	  kernel-devel-uname-r = ${kernel_uname_r}
+%post          -n kmod-${kmodname}-${group}-${kernel_uname_r}
+/usr/sbin/depmod -aeF /boot/System.map-${kernel_uname_r} ${kernel_uname_r} > /dev/null || :
+%postun        -n kmod-${kmodname}-${group}-${kernel_uname_r}
+/usr/sbin/depmod  -aF /boot/System.map-${kernel_uname_r} ${kernel_uname_r} &> /dev/null || :
+
+EOF
+			else
+			 	cat <<EOF
+%post          -n kmod-${kmodname}-${group}-${kernel_uname_r}
+[[ "$(uname -r)" == "${kernel_uname_r}"  ]] && /usr/sbin/depmod -a > /dev/null || :
+%postun        -n kmod-${kmodname}-${group}-${kernel_uname_r}
+[[ "$(uname -r)" == "${kernel_uname_r}"  ]] && /usr/sbin/depmod -a > /dev/null || :
+
+EOF
+
+			fi
+
+			# third part
+			cat <<EOF
+%description  -n kmod-${kmodname}-${group}-${kernel_uname_r}
+This package provides the ${kmodname}-${group} kernel modules built for the Linux
+kernel ${kernel_uname_r} for the %{_target_cpu} family of processors.
+
+%files        -n kmod-${kmodname}-${group}-${kernel_uname_r}
+%defattr(644,root,root,755)
+%dir /usr/lib/modules/${kernel_uname_r}/extra
+/usr/lib/modules/${kernel_uname_r}/extra/${kmodname}-${group}/
+
+
+EOF
+
+		done
+	fi
 }
 
 print_rpmtemplate_kmodmetapkg ()
 {
+		local group
+
 		local kernel_uname_r=${1}
 		local kernel_variant="${2:+-${2}}"
 
@@ -207,8 +514,22 @@ Summary:         Metapackage which tracks in ${kmodname} kernel module for newes
 Group:           System Environment/Kernel
 
 Provides:        ${kmodname}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
+EOF
+
+		if [[ ! "${kmodgroups}" ]]; then
+			cat <<EOF
 Requires:        kmod-${kmodname}-${kernel_uname_r} >= %{?epoch:%{epoch}:}%{version}-%{release}
 EOF
+
+		else
+			for group in ${kmodgroups}
+			do
+				cat <<EOF
+Requires:        kmod-${kmodname}-${group}${kernel_variant} >= %{?epoch:%{epoch}:}%{version}-%{release}
+EOF
+
+			done
+		fi
 	
 		if [[ ${obsolete_name} ]]; then
 			echo "Provides:        kmod-${obsolete_name}${kernel_variant} = ${obsolete_version}"
@@ -227,6 +548,39 @@ to make sure you get it together with a new kernel.
 
 
 EOF
+
+		if [[ ! "${kmodgroups}" ]]; then
+			for group in ${kmodgroups}
+			do
+				cat <<EOF
+%package      -n kmod-${kmodname}-${group}${kernel_variant}
+Summary:         Metapackage which tracks in ${kmodname}-${group} kernel module for newest kernel${kernel_variant}
+Group:           System Environment/Kernel
+
+Provides:        ${kmodname}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
+Provides:        ${kmodname}-${group}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
+Requires:        kmod-${kmodname}-${group}-${kernel_uname_r} >= %{?epoch:%{epoch}:}%{version}-%{release}
+EOF
+
+			if [[ ${obsolete_name} ]]; then
+				echo "Provides:        kmod-${obsolete_name}-${group}${kernel_variant} = ${obsolete_version}"
+				echo "Obsoletes:       kmod-${obsolete_name}-${group}${kernel_variant} < ${obsolete_version}"
+			fi
+
+			cat <<EOF
+
+%description  -n kmod-${kmodname}-${group}${kernel_variant}
+This is a meta-package without payload which sole purpose is to require the
+${kmodname}-${group} kernel module(s) for the newest kernel${kernel_variant}.
+to make sure you get it together with a new kernel.
+
+%files        -n kmod-${kmodname}-${group}${kernel_variant}
+%defattr(644,root,root,755)
+
+
+EOF
+			done
+		fi
 }
 
 print_customrpmtemplate ()
@@ -288,6 +642,7 @@ myprog_help ()
 	# FIXME	echo " --datadir <dir>     -- look for our shared files in <dir>"
 	echo " --filterfile <file>  -- filter the results with grep --file <file>"
 	echo " --for-kernels <list> -- created templates only for these kernels"
+	echo " --kmodgroups <list>  -- names of the kmod groups"
 	echo " --kmodname <file>    -- name of the kmod (required)"
 	echo " --noakmod            -- no akmod package"
 	echo " --repo <name>        -- use buildsys-build-<name>-kerneldevpkgs"
@@ -313,6 +668,14 @@ while [ "${1}" ] ; do
 	 	    fi
 			# strip pending -kmod
 			kmodname="${1%%-kmod}"
+			shift
+			;;
+		--kmodgroups)
+			shift
+			if [[ ! "${1}" ]] ; then
+				error_out 2 "Please provide the list of the kmod groups together with --kmodgroups." >&2
+			fi
+			kmodgroups="${1}"
 			shift
 			;;
 		--repo)
