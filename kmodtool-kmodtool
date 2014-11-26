@@ -39,6 +39,7 @@ kernel_versions_to_build_for=
 prefix=
 filterfile=
 target=
+kmodcommonevr='%{?epoch:%{epoch}:}%{version}'
 
 error_out()
 {
@@ -119,7 +120,7 @@ Requires:   kmodtool
 Requires: 	akmods
 %{?AkmodsBuildRequires:Requires: %{AkmodsBuildRequires}}
 # same requires and provides as a kmods package would have
-Requires: 	${kmodname}-kmod-common >= %{?epoch:%{epoch}:}%{version}
+Requires: 	${kmodname}-kmod-common >= ${kmodcommonevr}
 EOF
 
 	else
@@ -189,7 +190,7 @@ Requires:   kmodtool
 Requires: 	akmods
 %{?AkmodsBuildRequires:Requires: %{AkmodsBuildRequires}}
 # same requires and provides as a kmods package would have
-Requires: 	${kmodname}-kmod-common >= %{?epoch:%{epoch}:}%{version}
+Requires: 	${kmodname}-kmod-common >= ${kmodcommonevr}
 Provides: 	${kmodname}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
 Provides: 	${kmodname}-${group}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
 EOF
@@ -352,7 +353,7 @@ EOF
 
 	if [[ ! "${kmodgroups}" ]]; then
 		cat <<EOF
-Requires:         ${kmodname}-kmod-common >= %{?epoch:%{epoch}:}%{version}
+Requires:         ${kmodname}-kmod-common >= ${kmodcommonevr}
 Requires(post):   /usr/sbin/depmod
 Requires(postun): /usr/sbin/depmod
 EOF
@@ -447,7 +448,7 @@ Group:            System Environment/Kernel
 Provides:         kernel-modules-for-kernel = ${kernel_uname_r}
 Provides:         ${kmodname}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
 Provides:         ${kmodname}-${group}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
-Requires:         ${kmodname}-kmod-common >= %{?epoch:%{epoch}:}%{version}
+Requires:         ${kmodname}-kmod-common >= ${kmodcommonevr}
 Requires(post):   /usr/sbin/depmod
 Requires(postun): /usr/sbin/depmod
 Provides:        kmod-${kmodname}-${kernel_uname_r} = %{?epoch:%{epoch}:}%{version}-%{release}
@@ -738,6 +739,14 @@ while [ "${1}" ] ; do
 		--version)
 			echo "${myprog} ${myver}"
 			exit 0
+			;;
+		--kmod-common-version)
+			shift
+			if [[ ! "${1}" ]] ; then
+				error_out 2 "Please provide the version of the kmod-common to together with --kmod-common-version" >&2
+	 		fi
+			kmodcommonevr="${1}"
+			shift
 			;;
 		*)
 			echo "Error: Unknown option '${1}'." >&2
