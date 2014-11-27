@@ -31,6 +31,7 @@ myprog="kmodtool-${repo}"
 myver="0.12.1"
 
 kmodname=
+kmodreqlist=
 build_kernels="current"
 kernels_known_variants=
 kernel_versions=
@@ -58,6 +59,45 @@ print_rpmtemplate_header()
 	echo
 }
 
+print_rpmtemplate_kmods_requires ()
+{
+	local forkernel=false
+	local kernel_uname_r=
+	local kernel_variant=
+
+	if [[ "${1}" == "--kernel-variant" ]]; then
+		shift
+		kernel_variant="${1:+-${1}}"
+		shift
+		forkernel=true
+	elif [[ "${1}" ]]; then
+		kernel_uname_r="${1}"
+		shift
+		forkernel=true
+	fi
+
+	local req kmodreq_name kmodreq_version
+	for req in ${kmodreqlist}
+	do
+		kmodreq_name="${req%%:*}"
+		if [[ "${kmodreq_name}" != "$req" ]] ; then
+			kmodreq_version="${req#*:}"
+		else
+			kmodreq_version=
+		fi
+
+		if [[ ${forkernel} ]] ; then
+			if [[ "${kernel_uname_r}" ]] ; then
+				echo "Requires:        kmod-${kmodreq_name}-${kernel_uname_r}${kmodreq_version:+ >= $kmodreq_version}"
+			else
+				echo "Requires:        kmod-${kmodreq_name}${kernel_variant}${kmodreq_version:+ >= $kmodreq_version}"
+			fi
+		else
+			echo "Requires:        ${kmodreq_name}-kmod${kmodreq_version:+ >= $kmodreq_version}"
+		fi
+	done
+}
+
 print_akmodtemplate ()
 {
 	echo
@@ -77,6 +117,13 @@ Requires: 	akmods
 %{?AkmodsBuildRequires:Requires: %{AkmodsBuildRequires}}
 # same requires and provides as a kmods package would have
 Requires: 	${kmodname}-kmod-common >= %{?epoch:%{epoch}:}%{version}
+EOF
+
+	if [[ "${kmodreqlist}" ]]; then
+		print_rpmtemplate_kmods_requires
+	fi
+
+	cat <<EOF
 Provides: 	${kmodname}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
 EOF
 
@@ -113,6 +160,10 @@ Provides:        kmod-${kmodname}-smp = %{?epoch:%{epoch}:}%{version}-%{release}
 Provides:        kmod-${kmodname}-PAE = %{?epoch:%{epoch}:}%{version}-%{release}
 Requires:        akmod-${kmodname} = %{?epoch:%{epoch}:}%{version}-%{release}
 EOF
+
+	if [[ "${kmodreqlist}" ]]; then
+		print_rpmtemplate_kmods_requires
+	fi
 
 	if [[ ${obsolete_name} ]]; then
 		echo "Provides:        kmod-${obsolete_name} = ${obsolete_version}"
@@ -155,6 +206,10 @@ Requires:         ${kmodname}-kmod-common >= %{?epoch:%{epoch}:}%{version}
 Requires(post):   /usr/sbin/depmod
 Requires(postun): /usr/sbin/depmod
 EOF
+
+	if [[ "${kmodreqlist}" ]]; then
+		print_rpmtemplate_kmods_requires "${kernel_uname_r}"
+	fi
 
 	if [[ ${obsolete_name} ]]; then
 		echo "Provides:        kmod-${obsolete_name}-${kernel_uname_r} = ${obsolete_version}"
@@ -209,6 +264,10 @@ Group:           System Environment/Kernel
 Provides:        ${kmodname}-kmod = %{?epoch:%{epoch}:}%{version}-%{release}
 Requires:        kmod-${kmodname}-${kernel_uname_r} >= %{?epoch:%{epoch}:}%{version}-%{release}
 EOF
+
+		if [[ "${kmodreqlist}" ]]; then
+			print_rpmtemplate_kmods_requires --kernel-variant "${kernel_variant}"
+		fi
 	
 		if [[ ${obsolete_name} ]]; then
 			echo "Provides:        kmod-${obsolete_name}${kernel_variant} = ${obsolete_version}"
@@ -313,6 +372,14 @@ while [ "${1}" ] ; do
 	 	    fi
 			# strip pending -kmod
 			kmodname="${1%%-kmod}"
+			shift
+			;;
+		--kmodreqlist)
+			shift
+			if [[ ! "${1}" ]] ; then
+				error_out 2 "Please provide a list of the required kmods together with --kmodreqlist." >&2
+			fi
+			kmodreqlist="${1}"
 			shift
 			;;
 		--repo)
