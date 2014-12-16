@@ -67,7 +67,7 @@ print_rpmtemplate_kmods_requires ()
 
 	if [[ "${1}" == "--kernel-variant" ]]; then
 		shift
-		kernel_variant="${1:+-${1}}"
+		kernel_variant="${1:+${1}}"
 		shift
 		forkernel=true
 	elif [[ "${1}" ]]; then
