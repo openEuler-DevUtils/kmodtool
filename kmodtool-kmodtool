@@ -64,6 +64,12 @@ print_rpmtemplate_kmods_requires ()
 	local forkernel=false
 	local kernel_uname_r=
 	local kernel_variant=
+	local kmod_prefix="kmod"
+
+	if [[ "${1}" == "--akmod" ]]; then
+		shift
+		kmod_prefix="akmod"
+	fi
 
 	if [[ "${1}" == "--kernel-variant" ]]; then
 		shift
@@ -88,9 +94,9 @@ print_rpmtemplate_kmods_requires ()
 
 		if [[ ${forkernel} ]] ; then
 			if [[ "${kernel_uname_r}" ]] ; then
-				echo "Requires:        kmod-${kmodreq_name}-${kernel_uname_r}${kmodreq_version:+ >= $kmodreq_version}"
+				echo "Requires:        ${kmod_prefix}-${kmodreq_name}-${kernel_uname_r}${kmodreq_version:+ >= $kmodreq_version}"
 			else
-				echo "Requires:        kmod-${kmodreq_name}${kernel_variant}${kmodreq_version:+ >= $kmodreq_version}"
+				echo "Requires:        ${kmod_prefix}-${kmodreq_name}${kernel_variant}${kmodreq_version:+ >= $kmodreq_version}"
 			fi
 		else
 			echo "Requires:        ${kmodreq_name}-kmod${kmodreq_version:+ >= $kmodreq_version}"
@@ -120,7 +126,7 @@ Requires: 	${kmodname}-kmod-common >= %{?epoch:%{epoch}:}%{version}
 EOF
 
 	if [[ "${kmodreqlist}" ]]; then
-		print_rpmtemplate_kmods_requires
+		print_rpmtemplate_kmods_requires --akmod
 	fi
 
 	cat <<EOF
